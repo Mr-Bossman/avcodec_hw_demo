@@ -1,0 +1,5 @@
+*.mpeg
+*.h264
+main
+*.elf
+*.o
