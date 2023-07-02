@@ -1,5 +1,6 @@
 #include "common.h"
 #include <sys/time.h>
+#include <sys/sysinfo.h>
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -94,6 +95,9 @@ int main(int argc, char *argv[]) {
 		decoder_ctx->get_format = get_hw_format;
 		if ((ret = hw_decoder_init(decoder_ctx, hw_device_ctx, type)) < 0)
 			goto fail_packet;
+	} else {
+		decoder_ctx->thread_count = get_nprocs();
+		decoder_ctx->thread_type = FF_THREAD_FRAME;
 	}
 
 	if ((ret = avcodec_open2(decoder_ctx, decoder, NULL)) < 0) {
@@ -126,7 +130,6 @@ int main(int argc, char *argv[]) {
 	avformat_close_input(&input_ctx);
 	return ret;
 }
-
 
 static void print_help(const char *program_name) {
 	fprintf(stderr,
