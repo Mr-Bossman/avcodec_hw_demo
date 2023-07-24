@@ -8,21 +8,22 @@
 #include "get_hwdevice.h"
 #include "ansi_colors.h"
 
-typedef int(*receive_frame_callback)(AVFrame*, AVCodecContext*, void*);
+typedef int(*receive_frame_callback)(AVCodecContext*);
+
 typedef struct {
 	const char *file_name;
 	struct timeval start;
+	enum AVPixelFormat hw_pix_fmt;
+	AVFrame *frame;
 } frame_user_data_t;
-
-static enum AVPixelFormat hw_pix_fmt = AV_PIX_FMT_NONE;
 
 static uint64_t get_diff_time_ms(struct timeval start, struct timeval end);
 
 static void print_help(const char *program_name);
-static int receive_frame(AVFrame *frame, AVCodecContext *ctx, void *frame_user_data);
+static int receive_frame(AVCodecContext *ctx);
 static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts);
 static int decode_frames(AVCodecContext *avctx, AVPacket *packet, enum AVHWDeviceType type,
-			 receive_frame_callback callback, void *callback_user_data);
+			 receive_frame_callback callback);
 static int parse_hardware_codecs(const char *device_type, const AVCodec *decoder);
 
 int main(int argc, char *argv[]) {
@@ -35,7 +36,7 @@ int main(int argc, char *argv[]) {
 	enum AVHWDeviceType type;
 	int video_stream, ret = 0;
 	const char *device_type = NULL, *input_file = NULL, *output_file = NULL;
-	frame_user_data_t frame_user_data;
+	frame_user_data_t frame_user_data = {NULL, { 0, 0 }, AV_PIX_FMT_NONE, NULL};
 
 	if (argc < 3 || argc > 4) {
 		print_help(argv[0]);
@@ -78,11 +79,13 @@ int main(int argc, char *argv[]) {
 		goto fail_inctx;
 	}
 
+	decoder_ctx->opaque = &frame_user_data;
 
 	if ((ret = avcodec_parameters_to_context(decoder_ctx, video->codecpar)) < 0) {
 		fprintf(stderr, "Failed to copy codec parameters to decoder context\n");
 		goto fail_decctx;
 	}
+
 	packet = av_packet_alloc();
 	if (!packet) {
 		fprintf(stderr, "Failed to allocate AVPacket\n");
@@ -91,7 +94,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (type != AV_HWDEVICE_TYPE_NONE) {
-		hw_pix_fmt = get_supported_hwdecoder(type, decoder)->pix_fmt;
+		frame_user_data.hw_pix_fmt = get_supported_hwdecoder(type, decoder)->pix_fmt;
 		decoder_ctx->get_format = get_hw_format;
 		if ((ret = hw_decoder_init(decoder_ctx, hw_device_ctx, type)) < 0)
 			goto fail_packet;
@@ -109,15 +112,15 @@ int main(int argc, char *argv[]) {
 	while (ret >= 0) {
 		if ((ret = av_read_frame(input_ctx, packet)) < 0)
 			break;
-		if (video_stream == packet->stream_index)
+		if (video_stream == packet->stream_index) {
 			ret = decode_frames(decoder_ctx, packet, type,
-					    receive_frame, &frame_user_data);
-
+					    receive_frame);
+		}
 		av_packet_unref(packet);
 	}
 
 	/* flush the decoder */
-	ret = decode_frames(decoder_ctx, NULL, type, NULL, NULL);
+	ret = decode_frames(decoder_ctx, NULL, type, NULL);
 
 	fail_hwdec:
 	if (hw_device_ctx)
@@ -148,8 +151,9 @@ static uint64_t get_diff_time_ms(struct timeval start, struct timeval end) {
 	return end_ms - start_ms;
 }
 
-static int receive_frame(AVFrame *frame, AVCodecContext *ctx, void *frame_user_data) {
-	frame_user_data_t *frame_data = (frame_user_data_t*)frame_user_data;
+static int receive_frame(AVCodecContext *ctx) {
+	frame_user_data_t *frame_data = (frame_user_data_t*)ctx->opaque;
+	AVFrame *frame = frame_data->frame;
 	static char filename[1024];
 	int xsize = frame->width;
 	int ysize = frame->height;
@@ -224,23 +228,25 @@ static int parse_hardware_codecs(const char *device_type, const AVCodec *decoder
 }
 
 static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts) {
+	frame_user_data_t *frame_data = (frame_user_data_t*)ctx->opaque;
 	const enum AVPixelFormat *p;
 	(void)ctx;
 
 	for (p = pix_fmts; *p != -1; p++) {
-		if (*p == hw_pix_fmt)
+		if (*p == frame_data->hw_pix_fmt)
 			return *p;
 	}
-
+	// we can change to sw format
 	// Pixel format not supported in HW
 	fprintf(stderr, "Failed to get HW surface format.\n");
 	return AV_PIX_FMT_NONE;
 }
 
 static int decode_frames(AVCodecContext *avctx, AVPacket *packet, enum AVHWDeviceType type,
-			 receive_frame_callback callback, void *callback_user_data) {
+			 receive_frame_callback callback) {
 	AVFrame *frame = NULL, *sw_frame = NULL;
 	AVFrame *tmp_frame = NULL;
+	frame_user_data_t *frame_data = (frame_user_data_t*)avctx->opaque;
 	int ret = 0;
 
 	ret = avcodec_send_packet(avctx, packet);
@@ -266,7 +272,7 @@ static int decode_frames(AVCodecContext *avctx, AVPacket *packet, enum AVHWDevic
 			goto fail;
 		}
 
-		if (frame->format == hw_pix_fmt && type != AV_HWDEVICE_TYPE_NONE) {
+		if (frame->format == frame_data->hw_pix_fmt && type != AV_HWDEVICE_TYPE_NONE) {
 			if ((ret = av_hwframe_transfer_data(sw_frame, frame, 0)) < 0) {
 				fprintf(stderr, "Error transferring the data to system memory\n");
 				goto fail;
@@ -275,8 +281,10 @@ static int decode_frames(AVCodecContext *avctx, AVPacket *packet, enum AVHWDevic
 		} else
 			tmp_frame = frame;
 
+		frame_data->frame = tmp_frame;
+
 		if (callback)
-			ret = (*callback)(tmp_frame, avctx, callback_user_data);
+			ret = (*callback)(avctx);
 
 	fail:
 		av_frame_free(&frame);
