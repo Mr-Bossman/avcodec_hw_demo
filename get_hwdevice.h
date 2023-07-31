@@ -15,7 +15,6 @@ const AVCodecHWConfig *get_supported_hwdecoder(enum AVHWDeviceType type,const AV
 int init_avformat(const char *file_name, const AVCodec **decoder, AVFormatContext **input_ctx);
 
 
-int hw_decoder_init(AVCodecContext *ctx, AVBufferRef *hw_device_ctx,
-		    const enum AVHWDeviceType type);
+int hw_decoder_init(AVCodecContext *ctx, const enum AVHWDeviceType type);
 
 #endif // GET_HWDEVICE_H

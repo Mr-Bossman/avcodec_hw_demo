@@ -57,15 +57,60 @@ int init_avformat(const char *file_name, const AVCodec **decoder, AVFormatContex
 	return ret;
 }
 
-int hw_decoder_init(AVCodecContext *ctx, AVBufferRef *hw_device_ctx,
-		    const enum AVHWDeviceType type) {
+int hw_decoder_init(AVCodecContext *ctx, const enum AVHWDeviceType type) {
 	int err = 0;
 
-	if ((err = av_hwdevice_ctx_create(&hw_device_ctx, type, NULL, NULL, 0)) < 0) {
+	if ((err = av_hwdevice_ctx_create(&ctx->hw_device_ctx, type, NULL, NULL, 0)) < 0) {
 		fprintf(stderr, "Failed to create specified HW device.\n");
 		return err;
 	}
-	ctx->hw_device_ctx = av_buffer_ref(hw_device_ctx);
 
 	return err;
 }
+#if 0
+int hw_decoder_init_auto(AVCodecContext *ctx, AVBufferRef *hw_device_ctx) {
+	const AVCodecHWConfig *config;
+	enum AVHWDeviceType type;
+	HWDevice *dev = NULL;
+	int i, err = 0;
+	for (i = 0; !dev; i++) {
+		config = avcodec_get_hw_config(ist->dec, i);
+		if (!config)
+			break;
+		type = config->device_type;
+		// Try to make a new device of this type.
+		// If error device will be unchanged and we'll try the next one.
+		err = hw_device_init_from_type(type, ist->hwaccel_device, &dev);
+		if (err < 0) {
+			// Can't make a device of this type.
+			continue;
+		}
+		if (ist->hwaccel_device) {
+			fprintf(stderr, "Using auto "
+				   "hwaccel type %s with new device created "
+				   "from %s.\n", av_hwdevice_get_type_name(type),
+				   ist->hwaccel_device);
+		} else {
+			fprintf(stderr, "Using auto "
+				   "hwaccel type %s with new default device.\n",
+				   av_hwdevice_get_type_name(type));
+		}
+	}
+	if (dev) {
+		ist->hwaccel_device_type = type;
+	} else {
+		fprintf(stderr, "Auto hwaccel "
+			   "disabled: no device found.\n");
+		ist->hwaccel_id = HWACCEL_NONE;
+		return 0;
+	}
+/*
+	if ((err = av_hwdevice_ctx_create(&hw_device_ctx, type, NULL, NULL, 0)) < 0) {
+		fprintf(stderr, "Failed to create specified HW device.\n");
+		return err;
+	}*/
+	ctx->hw_device_ctx = av_buffer_ref(dev->device_ref);
+
+	return err;
+}
+#endif

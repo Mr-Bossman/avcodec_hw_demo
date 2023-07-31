@@ -28,7 +28,6 @@ static int decode_frames(AVCodecContext *avctx, AVPacket *packet, enum AVHWDevic
 static int parse_hardware_codecs(const char *device_type, const AVCodec *decoder);
 
 int main(int argc, char *argv[]) {
-	AVBufferRef *hw_device_ctx = NULL;
 	AVFormatContext *input_ctx = NULL;
 	const AVCodec *decoder = NULL;
 	AVStream *video = NULL;
@@ -110,7 +109,7 @@ int main(int argc, char *argv[]) {
 	if (type != AV_HWDEVICE_TYPE_NONE) {
 		frame_user_data.hw_pix_fmt = get_supported_hwdecoder(type, decoder)->pix_fmt;
 		decoder_ctx->get_format = get_hw_format;
-		if ((ret = hw_decoder_init(decoder_ctx, hw_device_ctx, type)) < 0)
+		if ((ret = hw_decoder_init(decoder_ctx, type)) < 0)
 			goto fail_packet;
 	} else {
 		decoder_ctx->thread_count = get_nprocs();
@@ -121,7 +120,7 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Failed to open codec for stream #%u\n", video_stream);
 		goto fail_hwdec;
 	}
-
+	type = AV_HWDEVICE_TYPE_NONE;
 	/* actual decoding and dump the raw data */
 	while (ret >= 0) {
 		if ((ret = av_read_frame(input_ctx, packet)) < 0)
@@ -137,8 +136,8 @@ int main(int argc, char *argv[]) {
 	ret = decode_frames(decoder_ctx, NULL, type, NULL);
 
 	fail_hwdec:
-	if (hw_device_ctx)
-		av_buffer_unref(&hw_device_ctx);
+	if (decoder_ctx->hw_device_ctx)
+		av_buffer_unref(&decoder_ctx->hw_device_ctx);
 	fail_packet:
 	av_packet_free(&packet);
 	fail_decctx:
