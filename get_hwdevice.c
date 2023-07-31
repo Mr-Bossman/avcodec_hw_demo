@@ -67,7 +67,7 @@ int hw_decoder_init(AVCodecContext *ctx, const enum AVHWDeviceType type) {
 
 	return err;
 }
-#if 0
+
 int hw_decoder_init_auto(AVCodecContext *ctx, AVBufferRef *hw_device_ctx) {
 	const AVCodecHWConfig *config;
 	enum AVHWDeviceType type;
@@ -80,21 +80,14 @@ int hw_decoder_init_auto(AVCodecContext *ctx, AVBufferRef *hw_device_ctx) {
 		type = config->device_type;
 		// Try to make a new device of this type.
 		// If error device will be unchanged and we'll try the next one.
-		err = hw_device_init_from_type(type, ist->hwaccel_device, &dev);
+		err = hw_device_init_from_type(type, NULL, &dev);
 		if (err < 0) {
 			// Can't make a device of this type.
 			continue;
 		}
-		if (ist->hwaccel_device) {
-			fprintf(stderr, "Using auto "
-				   "hwaccel type %s with new device created "
-				   "from %s.\n", av_hwdevice_get_type_name(type),
-				   ist->hwaccel_device);
-		} else {
-			fprintf(stderr, "Using auto "
-				   "hwaccel type %s with new default device.\n",
-				   av_hwdevice_get_type_name(type));
-		}
+		fprintf(stderr, "Using auto "
+			"hwaccel type %s with new default device.\n",
+			av_hwdevice_get_type_name(type));
 	}
 	if (dev) {
 		ist->hwaccel_device_type = type;
@@ -113,4 +106,45 @@ int hw_decoder_init_auto(AVCodecContext *ctx, AVBufferRef *hw_device_ctx) {
 
 	return err;
 }
-#endif
+
+int hw_device_init_from_type(enum AVHWDeviceType type,
+                             const char *device,
+                             HWDevice **dev_out)
+{
+    AVBufferRef *device_ref = NULL;
+    HWDevice *dev;
+    char *name;
+    int err;
+
+    name = hw_device_default_name(type);
+    if (!name) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    err = av_hwdevice_ctx_create(&device_ref, type, device, NULL, 0);
+    if (err < 0) {
+        av_log(NULL, AV_LOG_ERROR,
+               "Device creation failed: %d.\n", err);
+        goto fail;
+    }
+
+    dev = hw_device_add();
+    if (!dev) {
+        err = AVERROR(ENOMEM);
+        goto fail;
+    }
+
+    dev->name = name;
+    dev->type = type;
+    dev->device_ref = device_ref;
+
+    if (dev_out)
+        *dev_out = dev;
+
+    return 0;
+
+fail:
+    av_freep(&name);
+    av_buffer_unref(&device_ref);
+    return err;
