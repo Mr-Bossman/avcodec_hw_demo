@@ -14,6 +14,7 @@ typedef struct {
 	const char *file_name;
 	struct timeval start;
 	enum AVPixelFormat hw_pix_fmt;
+	//enum AVHWDeviceType dec_type;
 	AVFrame *frame;
 	AVFrame *sw_frame;
 } frame_user_data_t;
@@ -105,12 +106,16 @@ int main(int argc, char *argv[]) {
 		ret = AVERROR(ENOMEM);
 		goto fail_decctx;
 	}
-
+	ret = hw_decoder_init_auto(decoder_ctx, decoder, &type);
+	if(ret < 0) {
+		fprintf(stderr, "hw_decoder_init_auto %d\n", ret);
+		goto fail_packet;
+	}
 	if (type != AV_HWDEVICE_TYPE_NONE) {
 		frame_user_data.hw_pix_fmt = get_supported_hwdecoder(type, decoder)->pix_fmt;
 		decoder_ctx->get_format = get_hw_format;
-		if ((ret = hw_decoder_init(decoder_ctx, type)) < 0)
-			goto fail_packet;
+		//if ((ret = hw_decoder_init(decoder_ctx, type)) < 0)
+		//	goto fail_packet;
 	} else {
 		decoder_ctx->thread_count = get_nprocs();
 		decoder_ctx->thread_type = FF_THREAD_FRAME;

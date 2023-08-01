@@ -4,6 +4,12 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 
+#include "get_hwdevice.h"
+
+static int hw_device_init_from_type(enum AVHWDeviceType type,
+                             const char *device,
+                             HWDevice **dev_out);
+
 void print_avaliable_hw_devices(FILE *f) {
 	enum AVHWDeviceType type = AV_HWDEVICE_TYPE_NONE;
 	while ((type = av_hwdevice_iterate_types(type)) != AV_HWDEVICE_TYPE_NONE) {
@@ -68,46 +74,91 @@ int hw_decoder_init(AVCodecContext *ctx, const enum AVHWDeviceType type) {
 	return err;
 }
 
-int hw_decoder_init_auto(AVCodecContext *ctx, AVBufferRef *hw_device_ctx) {
+int hw_decoder_init_auto(AVCodecContext *ctx, AVCodec *decoder, enum AVHWDeviceType *type) {
 	const AVCodecHWConfig *config;
-	enum AVHWDeviceType type;
 	HWDevice *dev = NULL;
 	int i, err = 0;
 	for (i = 0; !dev; i++) {
-		config = avcodec_get_hw_config(ist->dec, i);
+		config = avcodec_get_hw_config(decoder, i);
 		if (!config)
 			break;
-		type = config->device_type;
+		*type = config->device_type;
 		// Try to make a new device of this type.
 		// If error device will be unchanged and we'll try the next one.
-		err = hw_device_init_from_type(type, NULL, &dev);
+		err = hw_device_init_from_type(*type, NULL, &dev);
 		if (err < 0) {
 			// Can't make a device of this type.
 			continue;
 		}
 		fprintf(stderr, "Using auto "
 			"hwaccel type %s with new default device.\n",
-			av_hwdevice_get_type_name(type));
+			av_hwdevice_get_type_name(*type));
 	}
-	if (dev) {
-		ist->hwaccel_device_type = type;
-	} else {
+	if (!dev) {
 		fprintf(stderr, "Auto hwaccel "
 			   "disabled: no device found.\n");
-		ist->hwaccel_id = HWACCEL_NONE;
+		*type = AV_HWDEVICE_TYPE_NONE;
 		return 0;
 	}
-/*
-	if ((err = av_hwdevice_ctx_create(&hw_device_ctx, type, NULL, NULL, 0)) < 0) {
-		fprintf(stderr, "Failed to create specified HW device.\n");
-		return err;
-	}*/
+
 	ctx->hw_device_ctx = av_buffer_ref(dev->device_ref);
 
 	return err;
 }
+static int nb_hw_devices;
+static HWDevice **hw_devices;
 
-int hw_device_init_from_type(enum AVHWDeviceType type,
+static HWDevice *hw_device_add(void)
+{
+    int err;
+    err = av_reallocp_array(&hw_devices, nb_hw_devices + 1,
+                            sizeof(*hw_devices));
+    if (err) {
+        nb_hw_devices = 0;
+        return NULL;
+    }
+    hw_devices[nb_hw_devices] = av_mallocz(sizeof(HWDevice));
+    if (!hw_devices[nb_hw_devices])
+        return NULL;
+    return hw_devices[nb_hw_devices++];
+}
+
+HWDevice *hw_device_get_by_name(const char *name)
+{
+    int i;
+    for (i = 0; i < nb_hw_devices; i++) {
+        if (!strcmp(hw_devices[i]->name, name))
+            return hw_devices[i];
+    }
+    return NULL;
+}
+
+static char *hw_device_default_name(enum AVHWDeviceType type)
+{
+    // Make an automatic name of the form "type%d".  We arbitrarily
+    // limit at 1000 anonymous devices of the same type - there is
+    // probably something else very wrong if you get to this limit.
+    const char *type_name = av_hwdevice_get_type_name(type);
+    char *name;
+    size_t index_pos;
+    int index, index_limit = 1000;
+    index_pos = strlen(type_name);
+    name = av_malloc(index_pos + 4);
+    if (!name)
+        return NULL;
+    for (index = 0; index < index_limit; index++) {
+        snprintf(name, index_pos + 4, "%s%d", type_name, index);
+        if (!hw_device_get_by_name(name))
+            break;
+    }
+    if (index >= index_limit) {
+        av_freep(&name);
+        return NULL;
+    }
+    return name;
+}
+
+static int hw_device_init_from_type(enum AVHWDeviceType type,
                              const char *device,
                              HWDevice **dev_out)
 {
@@ -148,3 +199,4 @@ fail:
     av_freep(&name);
     av_buffer_unref(&device_ref);
     return err;
+}

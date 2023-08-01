@@ -5,6 +5,12 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 
+typedef struct HWDevice {
+    char *name;
+    enum AVHWDeviceType type;
+    AVBufferRef *device_ref;
+} HWDevice;
+
 void print_avaliable_hw_devices(FILE *f);
 
 void print_suported_hw_devices_for_decoder(FILE *f, const AVCodec *decoder);
@@ -16,5 +22,6 @@ int init_avformat(const char *file_name, const AVCodec **decoder, AVFormatContex
 
 
 int hw_decoder_init(AVCodecContext *ctx, const enum AVHWDeviceType type);
+int hw_decoder_init_auto(AVCodecContext *ctx, AVCodec *decoder, enum AVHWDeviceType *type);
 
 #endif // GET_HWDEVICE_H
