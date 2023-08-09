@@ -4,6 +4,8 @@
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/pixdesc.h>
+
 
 #include "get_hwdevice.h"
 #include "ansi_colors.h"
@@ -248,20 +250,66 @@ static int parse_hardware_codecs(const char *device_type, const AVCodec *decoder
 	}
 	return type;
 }
+void ff_hwaccel_uninit(AVCodecContext *avctx)
+{
+    if (avctx->hwaccel && avctx->hwaccel->uninit)
+        avctx->hwaccel->uninit(avctx);
 
+ //   av_freep(&avctx->internal->hwaccel_priv_data);
+
+    avctx->hwaccel = NULL;
+
+    av_buffer_unref(&avctx->hw_frames_ctx);
+}
 static enum AVPixelFormat get_hw_format(AVCodecContext *ctx, const enum AVPixelFormat *pix_fmts) {
+	const AVPixFmtDescriptor *desc;
+	const AVCodecHWConfigInternal *hw_config;
 	frame_user_data_t *frame_data = (frame_user_data_t*)ctx->opaque;
 	const enum AVPixelFormat *p;
-	(void)ctx;
-
-	for (p = pix_fmts; *p != -1; p++) {
-		if (*p == frame_data->hw_pix_fmt)
-			return *p;
+	enum AVPixelFormat *choices;
+	enum AVPixelFormat user_choice;
+	int n;
+	for (n = 0; pix_fmts[n] != AV_PIX_FMT_NONE; n++) {
+		desc = av_pix_fmt_desc_get(pix_fmts[n]);
+		fprintf(stderr, "Format %s chosen by get_format().\n", desc->name);
 	}
+
+        if (ffcodec(ctx->codec)->hw_configs) {
+            for (i = 0;; i++) {
+                hw_config = ffcodec(ctx->codec)->hw_configs[i];
+                if (!hw_config)
+                    break;
+                if (hw_config->public.pix_fmt == user_choice)
+                    break;
+            }
+        } else {
+            hw_config = NULL;
+        }
+	ctx->hwaccel = hw_config->hwaccel;
+    if (ctx->hwaccel->init) {
+        err = ctx->hwaccel->init(ctx);
+        if (err < 0) {
+            fprintf(stderr, "Failed setup for format %s: "
+                   "hwaccel initialisation returned error.\n",
+                   av_get_pix_fmt_name(ctx->hwaccel->pix_fmt));
+            ctx->hwaccel = NULL;
+            return err;
+        }
+    }
 	// we can change to sw format
 	// Pixel format not supported in HW
-	fprintf(stderr, "Failed to get HW surface format.\n");
-	return AV_PIX_FMT_NONE;
+	//fprintf(stderr, "Failed to get HW surface format.\n");
+        //ff_hwaccel_uninit(ctx);
+	//choices = av_memdup(pix_fmts, (n + 1) * sizeof(*choices));
+	//if (!choices)
+		return AV_PIX_FMT_NONE;
+	//user_choice = ctx->get_format(ctx, choices);
+//	if (user_choice == AV_PIX_FMT_NONE) {
+		// Explicitly chose nothing, give up.
+	//	fprintf(stderr, "Faig.\n");
+	//}
+
+	return user_choice;
 }
 
 static int decode_frames(AVCodecContext *avctx, AVPacket *packet, enum AVHWDeviceType type,
